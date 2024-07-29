@@ -1,14 +1,14 @@
 #!/bin/bash
 
 # Check if script is run as root
-if [ "$EUID" -ne 0 ]
-  then echo "Please run as root"
+if [ "$EUID" -ne 0 ]; then
+  echo "Please run as root"
   exit
 fi
 
 # Install necessary packages
 apt update
-apt install -y hostapd dnsmasq
+apt install -y hostapd dnsmasq network-manager
 
 # Stop services
 systemctl stop hostapd
@@ -26,7 +26,7 @@ macaddr_acl=0
 auth_algs=1
 ignore_broadcast_ssid=0
 wpa=2
-wpa_passphrase=1234
+wpa_passphrase=12341234
 wpa_key_mgmt=WPA-PSK
 wpa_pairwise=TKIP
 rsn_pairwise=CCMP
@@ -39,22 +39,12 @@ interface=wlan0
 dhcp-range=192.168.4.2,192.168.4.20,255.255.255.0,24h
 EOF
 
-# Configure network interfaces
-cat > /etc/netplan/50-cloud-init.yaml << EOF
-network:
-  version: 2
-  renderer: networkd
-  ethernets:
-    eth0:
-      dhcp4: true
-  wifis:
-    wlan0:
-      dhcp4: false
-      addresses: [192.168.4.1/24]
-EOF
-
-# Apply netplan configuration
-netplan apply
+# Configure network interfaces using NetworkManager
+nmcli radio wifi on
+nmcli connection add type wifi ifname wlan0 con-name DeltaV autoconnect yes ssid DeltaV
+nmcli connection modify DeltaV 802-11-wireless.mode ap 802-11-wireless.band bg ipv4.method shared
+nmcli connection modify DeltaV wifi-sec.key-mgmt wpa-psk
+nmcli connection modify DeltaV wifi-sec.psk "12341234"
 
 # Enable IP forwarding
 echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
@@ -72,8 +62,7 @@ iptables-save > /etc/iptables.ipv4.nat
 cat > /usr/local/bin/start_hotspot.sh << EOF
 #!/bin/bash
 iptables-restore < /etc/iptables.ipv4.nat
-systemctl start hostapd
-systemctl start dnsmasq
+nmcli con up DeltaV
 EOF
 
 chmod +x /usr/local/bin/start_hotspot.sh
@@ -86,20 +75,21 @@ After=network.target
 
 [Service]
 ExecStart=/usr/local/bin/start_hotspot.sh
+Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 # Enable services
-systemctl unmask hostapd
-systemctl enable hostapd
-systemctl enable dnsmasq
+systemctl enable NetworkManager
 systemctl enable hotspot.service
 
 # Start services
-systemctl start hostapd
-systemctl start dnsmasq
+systemctl start NetworkManager
 systemctl start hotspot.service
+
+# Fix permissions for netplan files
+chmod 600 /etc/netplan/*.yaml
 
 echo "WiFi hotspot setup complete. Please reboot your Raspberry Pi."
